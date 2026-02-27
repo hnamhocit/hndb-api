@@ -1,0 +1,190 @@
+import { Pool as RawPool } from 'mysql2'
+import { Pool as PromisePool } from 'mysql2/promise'
+
+import { constants } from '../../constants'
+import { DatabaseAdapter, DatabaseSchema, QueryResult } from '../../types'
+
+export class MySQLAdapter implements DatabaseAdapter {
+	private promisePool: PromisePool
+
+	constructor(private pool: RawPool) {
+		this.promisePool = this.pool.promise()
+	}
+
+	async listDatabases(): Promise<string[]> {
+		const sql = 'SHOW DATABASES;'
+		const [rows] = await this.promisePool.query(sql)
+		return (rows as any[]).map((row) => row.Database)
+	}
+
+	async getSchema(databaseName?: string): Promise<DatabaseSchema> {
+		if (!databaseName) {
+			throw new Error('MySQL requires databaseName to get schema')
+		}
+
+		const sql = `
+           SELECT
+    c.TABLE_NAME AS table_name,
+    c.COLUMN_NAME AS column_name,
+    c.COLUMN_TYPE AS data_type,
+    IF(c.IS_NULLABLE = 'YES', true, false) AS is_nullable,
+    c.COLUMN_DEFAULT AS column_default,
+
+    -- Check Primary, Unique, Index dựa vào COLUMN_KEY ('PRI', 'UNI', 'MUL')
+    IF(c.COLUMN_KEY = 'PRI', true, false) AS is_primary,
+    IF(c.COLUMN_KEY = 'UNI' OR c.COLUMN_KEY = 'PRI', true, false) AS is_unique,
+    IF(c.COLUMN_KEY != '', true, false) AS is_indexed,
+
+    -- Check Foreign Key và lấy Target
+    IF(kcu.REFERENCED_TABLE_NAME IS NOT NULL, true, false) AS is_foreign_key,
+    CONCAT(kcu.REFERENCED_TABLE_NAME, '.', kcu.REFERENCED_COLUMN_NAME) AS foreign_key_target
+
+FROM information_schema.COLUMNS c
+-- JOIN để lấy thông tin Foreign Key
+LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu
+    ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+    AND c.TABLE_NAME = kcu.TABLE_NAME
+    AND c.COLUMN_NAME = kcu.COLUMN_NAME
+    AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+WHERE c.TABLE_SCHEMA = ?
+ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
+        `
+
+		const [rows] = await this.promisePool.query(sql, [databaseName])
+
+		const schema: DatabaseSchema = (rows as any[]).reduce((acc, row) => {
+			const { table_name, ...columnInfo } = row
+			if (!acc[table_name]) acc[table_name] = []
+
+			acc[table_name].push({
+				column_name: columnInfo.column_name,
+				data_type: columnInfo.data_type,
+				is_nullable: columnInfo.is_nullable === 'YES',
+				column_default: columnInfo.column_default,
+
+				is_primary: columnInfo.is_primary === 1,
+				is_foreign_key: columnInfo.is_foreign_key === 1,
+				is_unique: columnInfo.is_unique === 1,
+				is_indexed: columnInfo.is_indexed === 1,
+				foreign_key_target: columnInfo.foreign_key_target,
+			})
+
+			return acc
+		}, {} as DatabaseSchema)
+
+		return schema
+	}
+
+	async executeRawQuery(
+		sql: string,
+		maxRows: number = constants.MAX_ROWS,
+	): Promise<QueryResult> {
+		const startTime = process.hrtime.bigint()
+		const isReadQuery = /^\s*(SELECT|SHOW|EXPLAIN|DESCRIBE|DESC)/i.test(sql)
+
+		if (isReadQuery) {
+			return await new Promise((resolve, reject) => {
+				this.pool.getConnection((err, conn) => {
+					if (err) return reject(err)
+
+					const cleanup = () => conn.release()
+
+					conn.query(
+						`SET SESSION MAX_EXECUTION_TIME = ${constants.QUERY_TIMEOUT_MS}`,
+						(setErr) => {
+							if (setErr) {
+								cleanup()
+								return reject(setErr)
+							}
+
+							const rows: any[] = []
+							let isLimited = false
+
+							const stream = conn.query(sql).stream()
+
+							stream.on('data', (row) => {
+								if (rows.length < maxRows) rows.push(row)
+								else {
+									isLimited = true
+									stream.destroy()
+								}
+							})
+
+							stream.on('error', (streamErr) => {
+								cleanup()
+								reject(streamErr)
+							})
+
+							stream.on('end', () => {
+								cleanup()
+								const durationMs =
+									Number(
+										process.hrtime.bigint() - startTime,
+									) / 1_000_000
+								resolve({
+									rows,
+									durationMs,
+									isLimited,
+									command: 'SELECT',
+								})
+							})
+
+							stream.on('close', () => {
+								if (isLimited) {
+									cleanup()
+									const durationMs =
+										Number(
+											process.hrtime.bigint() - startTime,
+										) / 1_000_000
+									resolve({
+										rows,
+										durationMs,
+										isLimited,
+										command: 'SELECT',
+									})
+								}
+							})
+						},
+					)
+				})
+			})
+		} else {
+			const conn = await this.promisePool.getConnection()
+
+			try {
+				await conn.query(
+					`SET SESSION MAX_EXECUTION_TIME = ${constants.QUERY_TIMEOUT_MS}`,
+				)
+				const [result] = await conn.query(sql)
+				const durationMs =
+					Number(process.hrtime.bigint() - startTime) / 1_000_000
+
+				if (
+					result &&
+					!Array.isArray(result) &&
+					'affectedRows' in result
+				) {
+					return {
+						rows: [],
+						durationMs,
+						isLimited: false,
+						affectedRows: result.affectedRows,
+						command: 'MUTATION',
+					}
+				}
+
+				return {
+					rows: Array.isArray(result) ? result : [],
+					durationMs,
+					isLimited: false,
+				}
+			} finally {
+				conn.release()
+			}
+		}
+	}
+
+	async close() {
+		await this.pool.end()
+	}
+}
