@@ -5,13 +5,14 @@
 	"main": "src/main.ts",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
-		"dev": "npx tsx watch src/main.ts"
+		"dev": "nodemon --watch src --ext ts,json --exec tsx src/main.ts"
 	},
 	"keywords": [],
 	"author": "",
 	"license": "ISC",
 	"type": "commonjs",
 	"dependencies": {
+		"@supabase/supabase-js": "^2.98.0",
 		"cors": "^2.8.6",
 		"express": "^5.2.1",
 		"express-rate-limit": "^8.2.1",

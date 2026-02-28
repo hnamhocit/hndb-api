@@ -2,7 +2,12 @@ import { Pool } from 'pg'
 import QueryStream from 'pg-query-stream'
 
 import { constants } from '../../constants'
-import { DatabaseAdapter, DatabaseSchema } from '../../types'
+import {
+	ColumnInfo,
+	DatabaseAdapter,
+	DatabaseSchema,
+	Relationship,
+} from '../../types'
 
 export class PostgreSQLAdapter implements DatabaseAdapter {
 	constructor(private pool: Pool) {}
@@ -29,19 +34,11 @@ SELECT
     -- Check Unique
     COALESCE((SELECT indisunique FROM pg_index i WHERE i.indrelid = c.oid AND a.attnum = ANY(i.indkey) LIMIT 1), false) AS is_unique,
 
-    -- Check Index (Nếu có nằm trong bất kỳ index nào)
+    -- Check Index
     EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND a.attnum = ANY(i.indkey)) AS is_indexed,
 
-    -- Check Foreign Key
-    EXISTS(SELECT 1 FROM pg_constraint con WHERE con.conrelid = c.oid AND con.contype = 'f' AND a.attnum = ANY(con.conkey)) AS is_foreign_key,
-
-    -- Lấy thông tin Bảng & Cột mà Foreign Key trỏ tới (vd: users.id)
-    (SELECT fcls.relname || '.' || fa.attname
-     FROM pg_constraint con
-     JOIN pg_class fcls ON fcls.oid = con.confrelid
-     JOIN pg_attribute fa ON fa.attnum = ANY(con.confkey) AND fa.attrelid = con.confrelid
-     WHERE con.conrelid = c.oid AND con.contype = 'f' AND a.attnum = ANY(con.conkey)
-     LIMIT 1) AS foreign_key_target
+    -- Check Foreign Key (Chỉ cần biết có phải FK hay không để UI hiện icon)
+    EXISTS(SELECT 1 FROM pg_constraint con WHERE con.conrelid = c.oid AND con.contype = 'f' AND a.attnum = ANY(con.conkey)) AS is_foreign_key
 
 FROM pg_catalog.pg_attribute a
 JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
@@ -52,7 +49,7 @@ WHERE n.nspname = 'public'
   AND a.attnum > 0
   AND NOT a.attisdropped
 ORDER BY c.relname, a.attnum;
-        `
+    `
 
 		const result = await this.pool.query(sql)
 
@@ -61,7 +58,7 @@ ORDER BY c.relname, a.attnum;
 			const { table_name, ...columnInfo } = row
 			if (!acc[table_name]) acc[table_name] = []
 
-			acc[table_name].push({
+			const data: ColumnInfo = {
 				column_name: columnInfo.column_name,
 				data_type: columnInfo.data_type,
 				is_nullable: columnInfo.is_nullable,
@@ -71,13 +68,43 @@ ORDER BY c.relname, a.attnum;
 				is_foreign_key: columnInfo.is_foreign_key,
 				is_unique: columnInfo.is_unique,
 				is_indexed: columnInfo.is_indexed,
-				foreign_key_target: columnInfo.foreign_key_target,
-			})
+			}
+
+			acc[table_name].push(data)
 
 			return acc
 		}, {} as DatabaseSchema)
 
 		return schema
+	}
+
+	async getTableRelationships(
+		tableName: string,
+		databaseName: string | null,
+	): Promise<Relationship[]> {
+		const sql = `
+SELECT
+    tc.table_name AS source_table,
+    kcu.column_name AS source_column,
+    ccu.table_name AS target_table,
+    ccu.column_name AS target_column
+FROM
+    information_schema.table_constraints AS tc
+JOIN information_schema.key_column_usage AS kcu
+    ON tc.constraint_name = kcu.constraint_name
+    AND tc.table_schema = kcu.table_schema
+JOIN information_schema.constraint_column_usage AS ccu
+    ON ccu.constraint_name = tc.constraint_name
+    AND ccu.table_schema = tc.table_schema
+WHERE
+    tc.constraint_type = 'FOREIGN KEY'
+    AND tc.table_schema = 'public'
+    -- Thêm điều kiện: Bảng này là nguồn (trỏ đi) HOẶC là đích (bị trỏ tới)
+    AND (tc.table_name = $1 OR ccu.table_name = $1);
+    `
+
+		const result = await this.pool.query(sql, [tableName])
+		return result.rows
 	}
 
 	async executeRawQuery(

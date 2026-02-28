@@ -22,4 +22,10 @@ router.get(
 	databasesController.getTablePreview,
 )
 
+router.get(
+	'/:db/tables/:table/relationships',
+	injectDbClient,
+	databasesController.getTableRelationships,
+)
+
 export default router

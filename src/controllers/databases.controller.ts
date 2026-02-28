@@ -101,6 +101,37 @@ class DatabasesController {
 			})
 		}
 	}
+
+	async getTableRelationships(req: Request, res: Response) {
+		const { db, table } = req.params
+
+		if (typeof db !== 'string' || db.trim() === '') {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Database name is required' })
+		}
+
+		if (typeof table !== 'string' || table.trim() === '') {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Table name is required' })
+		}
+
+		try {
+			const relationships = await req.dbClient.getTableRelationships(
+				table,
+				db,
+			)
+
+			res.json({ ok: true, data: relationships })
+		} catch (error) {
+			console.error('Error getting table relationships:', error)
+			res.status(500).json({
+				ok: false,
+				error: 'Failed to get table relationships',
+			})
+		}
+	}
 }
 
 export const databasesController = new DatabasesController()

@@ -10,13 +10,23 @@ export interface ColumnInfo {
 	is_foreign_key: boolean
 	is_unique: boolean
 	is_indexed: boolean
-	foreign_key_target: string | null
+}
+
+export interface Relationship {
+	source_table: string
+	source_column: string
+	target_table: string
+	target_column: string
 }
 
 export type DatabaseSchema = Record<string, ColumnInfo[]>
 
 export interface DatabaseAdapter {
 	listDatabases(): Promise<string[]>
+	getTableRelationships(
+		tableName: string,
+		databaseName: string | null,
+	): Promise<Relationship[]>
 	getSchema(databaseName?: string): Promise<DatabaseSchema>
 	executeRawQuery(sql: string, maxRows?: number): Promise<QueryResult>
 	close(): Promise<void>

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 
-import { systemPool } from '../database'
+import { supabase } from '../database'
 import { encryptPassword } from '../utils'
 
 class DataSourcesController {
@@ -56,20 +56,30 @@ class DataSourcesController {
 
 			delete config.savePassword
 
-			const result = await systemPool.query(
-				`
-            INSERT INTO data_sources (type, user_id, config)
-            VALUES ($1, $2, $3)
-            RETURNING *;
-            `,
-				[type, userId, config],
-			)
+			const { data, error } = await supabase
+				.from('data_sources')
+				.insert([
+					{
+						type: type,
+						user_id: userId,
+						config: config,
+					},
+				])
+				.select()
+				.single()
 
-			const newDataSource = result.rows[0]
+			if (error) {
+				console.error('Error adding data source:', error.message)
 
-			res.json({ ok: true, data: newDataSource })
+				return res.status(500).json({
+					ok: false,
+					error: 'Failed to add data source.',
+				})
+			}
+
+			res.json({ ok: true, data: data })
 		} catch (error) {
-			console.error('Lỗi khi thêm data source:', error)
+			console.error('Error adding data source:', error)
 			res.status(500).json({
 				ok: false,
 				error: 'Failed to add data source.',

@@ -5,7 +5,7 @@ import { Pool as PgPool } from 'pg'
 import { DatabaseAdapter, IDataSource } from '../types'
 import { decryptPassword } from '../utils'
 import { MySQLAdapter, PostgreSQLAdapter } from './adapters'
-import { systemPool } from './system.db'
+import { supabase } from './supabase'
 
 class ConnectionManager {
 	private cache: LRUCache<string, DatabaseAdapter>
@@ -40,15 +40,19 @@ class ConnectionManager {
 
 		console.log(`Cache Miss for: ${cacheKey}. Fetching from System DB...`)
 
-		const { rows } = await systemPool.query(
-			'SELECT * FROM data_sources WHERE id = $1',
-			[dataSourceId],
-		)
+		const { data, error } = await supabase
+			.from('data_sources')
+			.select('*')
+			.eq('id', dataSourceId)
+			.single()
 
-		const dataSourceInfo = rows[0]
-		if (!dataSourceInfo) throw new Error('DATA_SOURCE_NOT_FOUND')
+		if (error) {
+			throw new Error(`Failed to fetch data source: ${error.message}`)
+		}
 
-		return await this.getConnection(dataSourceInfo, targetDbName) // Truyền tiếp targetDbName
+		if (!data) throw new Error('DATA_SOURCE_NOT_FOUND')
+
+		return await this.getConnection(data, targetDbName) // Truyền tiếp targetDbName
 	}
 
 	public async getConnection(

@@ -2,7 +2,12 @@ import { Pool as RawPool } from 'mysql2'
 import { Pool as PromisePool } from 'mysql2/promise'
 
 import { constants } from '../../constants'
-import { DatabaseAdapter, DatabaseSchema, QueryResult } from '../../types'
+import {
+	DatabaseAdapter,
+	DatabaseSchema,
+	QueryResult,
+	Relationship,
+} from '../../types'
 
 export class MySQLAdapter implements DatabaseAdapter {
 	private promisePool: PromisePool
@@ -17,30 +22,56 @@ export class MySQLAdapter implements DatabaseAdapter {
 		return (rows as any[]).map((row) => row.Database)
 	}
 
+	async getTableRelationships(
+		tableName: string,
+		databaseName: string | null,
+	): Promise<Relationship[]> {
+		const sql = `
+    SELECT
+        TABLE_NAME AS source_table,
+        COLUMN_NAME AS source_column,
+        REFERENCED_TABLE_NAME AS target_table,
+        REFERENCED_COLUMN_NAME AS target_column
+    FROM
+        INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+    WHERE
+        REFERENCED_TABLE_NAME IS NOT NULL
+        AND TABLE_SCHEMA = ?
+        AND (TABLE_NAME = ? OR REFERENCED_TABLE_NAME = ?);
+    `
+
+		const [rows] = await this.promisePool.query(sql, [
+			databaseName,
+			tableName,
+			tableName,
+		])
+
+		return rows as Relationship[]
+	}
+
 	async getSchema(databaseName?: string): Promise<DatabaseSchema> {
 		if (!databaseName) {
 			throw new Error('MySQL requires databaseName to get schema')
 		}
 
 		const sql = `
-           SELECT
+SELECT
     c.TABLE_NAME AS table_name,
     c.COLUMN_NAME AS column_name,
     c.COLUMN_TYPE AS data_type,
-    IF(c.IS_NULLABLE = 'YES', true, false) AS is_nullable,
+    IF(c.IS_NULLABLE = 'YES', 1, 0) AS is_nullable,
     c.COLUMN_DEFAULT AS column_default,
 
     -- Check Primary, Unique, Index dựa vào COLUMN_KEY ('PRI', 'UNI', 'MUL')
-    IF(c.COLUMN_KEY = 'PRI', true, false) AS is_primary,
-    IF(c.COLUMN_KEY = 'UNI' OR c.COLUMN_KEY = 'PRI', true, false) AS is_unique,
-    IF(c.COLUMN_KEY != '', true, false) AS is_indexed,
+    IF(c.COLUMN_KEY = 'PRI', 1, 0) AS is_primary,
+    IF(c.COLUMN_KEY = 'UNI' OR c.COLUMN_KEY = 'PRI', 1, 0) AS is_unique,
+    IF(c.COLUMN_KEY != '', 1, 0) AS is_indexed,
 
-    -- Check Foreign Key và lấy Target
-    IF(kcu.REFERENCED_TABLE_NAME IS NOT NULL, true, false) AS is_foreign_key,
-    CONCAT(kcu.REFERENCED_TABLE_NAME, '.', kcu.REFERENCED_COLUMN_NAME) AS foreign_key_target
+    -- Check Foreign Key (Chỉ lấy cờ boolean để UI hiện icon)
+    IF(kcu.REFERENCED_TABLE_NAME IS NOT NULL, 1, 0) AS is_foreign_key
 
 FROM information_schema.COLUMNS c
--- JOIN để lấy thông tin Foreign Key
+-- JOIN để kiểm tra Foreign Key
 LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu
     ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
     AND c.TABLE_NAME = kcu.TABLE_NAME
@@ -48,7 +79,7 @@ LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu
     AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
 WHERE c.TABLE_SCHEMA = ?
 ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
-        `
+    `
 
 		const [rows] = await this.promisePool.query(sql, [databaseName])
 
@@ -59,14 +90,14 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 			acc[table_name].push({
 				column_name: columnInfo.column_name,
 				data_type: columnInfo.data_type,
-				is_nullable: columnInfo.is_nullable === 'YES',
+
+				is_nullable: columnInfo.is_nullable === 1,
 				column_default: columnInfo.column_default,
 
 				is_primary: columnInfo.is_primary === 1,
 				is_foreign_key: columnInfo.is_foreign_key === 1,
 				is_unique: columnInfo.is_unique === 1,
 				is_indexed: columnInfo.is_indexed === 1,
-				foreign_key_target: columnInfo.foreign_key_target,
 			})
 
 			return acc
