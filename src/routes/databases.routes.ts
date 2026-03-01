@@ -16,6 +16,12 @@ router.post(
 
 router.get('/:db/schema', injectDbClient, databasesController.getSchema)
 
+router.post(
+	'/:db/tables/:table/query/plan',
+	injectDbClient,
+	databasesController.queryPlan,
+)
+
 router.get(
 	'/:db/tables/:table/preview',
 	injectDbClient,

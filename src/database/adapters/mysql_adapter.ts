@@ -4,8 +4,9 @@ import { Pool as PromisePool } from 'mysql2/promise'
 import { constants } from '../../constants'
 import {
 	DatabaseAdapter,
+	DatabaseQueryPlan,
 	DatabaseSchema,
-	QueryResult,
+	IQueryResult,
 	Relationship,
 } from '../../types'
 
@@ -106,10 +107,38 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 		return schema
 	}
 
+	async queryPlan(
+		sql: string,
+		isAlreadyExplain: boolean,
+	): Promise<DatabaseQueryPlan> {
+		const planSql = isAlreadyExplain ? sql : `EXPLAIN FORMAT=JSON ${sql}`
+
+		const [rows] = await this.promisePool.query(planSql)
+
+		// Nếu user tự gõ EXPLAIN (vd: EXPLAIN SELECT...), kết quả trả về là một bảng thô.
+		if (isAlreadyExplain) {
+			return rows as DatabaseQueryPlan
+		}
+
+		// Nếu hệ thống chạy ngầm, MySQL trả về 1 dòng duy nhất có cột tên là 'EXPLAIN' chứa chuỗi JSON
+		const explainResult = (rows as any[])[0]
+
+		if (explainResult && explainResult.EXPLAIN) {
+			try {
+				// Parse chuỗi JSON thành Object để Frontend dễ render
+				return JSON.parse(explainResult.EXPLAIN)
+			} catch (e) {
+				return explainResult.EXPLAIN
+			}
+		}
+
+		return rows as DatabaseQueryPlan
+	}
+
 	async executeRawQuery(
 		sql: string,
 		maxRows: number = constants.MAX_ROWS,
-	): Promise<QueryResult> {
+	): Promise<IQueryResult> {
 		const startTime = process.hrtime.bigint()
 		const isReadQuery = /^\s*(SELECT|SHOW|EXPLAIN|DESCRIBE|DESC)/i.test(sql)
 
@@ -157,6 +186,7 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 									durationMs,
 									isLimited,
 									command: 'SELECT',
+									affectedRows: rows.length,
 								})
 							})
 
@@ -172,6 +202,7 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 										durationMs,
 										isLimited,
 										command: 'SELECT',
+										affectedRows: rows.length,
 									})
 								}
 							})
@@ -208,6 +239,8 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION;
 					rows: Array.isArray(result) ? result : [],
 					durationMs,
 					isLimited: false,
+					affectedRows: Array.isArray(result) ? result.length : 0,
+					command: 'UNKNOWN',
 				}
 			} finally {
 				conn.release()

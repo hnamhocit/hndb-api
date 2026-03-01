@@ -3,9 +3,11 @@ import QueryStream from 'pg-query-stream'
 
 import { constants } from '../../constants'
 import {
-	ColumnInfo,
 	DatabaseAdapter,
+	DatabaseQueryPlan,
 	DatabaseSchema,
+	IColumn,
+	IQueryResult,
 	Relationship,
 } from '../../types'
 
@@ -58,7 +60,7 @@ ORDER BY c.relname, a.attnum;
 			const { table_name, ...columnInfo } = row
 			if (!acc[table_name]) acc[table_name] = []
 
-			const data: ColumnInfo = {
+			const data: IColumn = {
 				column_name: columnInfo.column_name,
 				data_type: columnInfo.data_type,
 				is_nullable: columnInfo.is_nullable,
@@ -107,10 +109,34 @@ WHERE
 		return result.rows
 	}
 
+	async queryPlan(
+		sql: string,
+		isAlreadyExplain: boolean,
+	): Promise<DatabaseQueryPlan> {
+		// Tự động bọc EXPLAIN (FORMAT JSON) nếu user chưa gõ
+		const planSql = isAlreadyExplain ? sql : `EXPLAIN (FORMAT JSON) ${sql}`
+
+		const result = await this.pool.query(planSql)
+
+		// Nếu user tự gõ EXPLAIN, kết quả là text thô
+		if (isAlreadyExplain) {
+			return result.rows
+		}
+
+		// Nếu hệ thống chạy ngầm, Postgres trả về mảng JSON ở cột 'QUERY PLAN'
+		const explainResult = result.rows[0]
+
+		if (explainResult && explainResult['QUERY PLAN']) {
+			return explainResult['QUERY PLAN']
+		}
+
+		return result.rows
+	}
+
 	async executeRawQuery(
 		sql: string,
 		maxRows: number = constants.MAX_ROWS,
-	): Promise<any> {
+	): Promise<IQueryResult> {
 		const startTime = process.hrtime.bigint()
 		const client = await this.pool.connect()
 
@@ -145,6 +171,7 @@ WHERE
 							durationMs,
 							isLimited,
 							command: 'SELECT',
+							affectedRows: rows.length,
 						})
 					})
 					stream.on('close', () => {
@@ -157,6 +184,7 @@ WHERE
 								durationMs,
 								isLimited,
 								command: 'SELECT',
+								affectedRows: rows.length,
 							})
 						}
 					})

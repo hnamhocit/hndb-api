@@ -1,7 +1,7 @@
-export interface QueryResult {
+export interface IQueryResult {
 	rows: any[]
 	durationMs: number
 	isLimited: boolean
-	affectedRows?: number
-	command?: string
+	affectedRows: number | null
+	command: string | null
 }

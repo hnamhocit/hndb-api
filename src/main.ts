@@ -11,10 +11,14 @@ setupMiddlewares(app)
 
 app.use('/api', routes)
 
+app.get('/api/health', async (req, res) => {
+	await checkSupabaseHealth()
+
+	res.json({ ok: true, message: 'Server is healthy' })
+})
+
 const PORT = Number(process.env.PORT || '8080')
 
 app.listen(PORT, async () => {
 	console.log(`🚀 Server is running on port ${PORT}`)
-
-	await checkSupabaseHealth()
 })
