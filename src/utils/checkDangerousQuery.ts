@@ -1,25 +1,37 @@
-import { parse } from 'pgsql-ast-parser'
+import { Parser } from 'node-sql-parser'
 
-export function checkDangerousQuery(sql: string) {
-	const ast = parse(sql)
+const parser = new Parser()
 
-	for (const statement of ast) {
-		const stmtType = statement.type as string
+export function checkDangerousQuery(sql: string, dialect: string = 'mysql') {
+	try {
+		// Tạo Cây cú pháp (AST) dựa trên đúng loại Database
+		const astResult = parser.astify(sql, { database: dialect })
 
-		if (
-			stmtType === 'drop database' ||
-			stmtType === 'drop table' ||
-			stmtType === 'truncate table'
-		) {
-			return 'DANGEROUS_DROP'
-		}
+		const statements = Array.isArray(astResult) ? astResult : [astResult]
 
-		if (statement.type === 'delete' || statement.type === 'update') {
-			if (!statement.where) {
-				return 'DANGEROUS_NO_WHERE'
+		for (const statement of statements) {
+			if (!statement) continue
+
+			const stmtType = statement.type.toLowerCase()
+
+			// 1. Chặn các lệnh phá hoại cấu trúc (DROP, TRUNCATE)
+			if (stmtType === 'drop' || stmtType === 'truncate') {
+				return 'DANGEROUS_DROP'
+			}
+
+			// 2. Chặn thao tác dữ liệu diện rộng không có điều kiện (UPDATE/DELETE quên WHERE)
+			if (stmtType === 'delete' || stmtType === 'update') {
+				if (!('where' in statement) || !statement.where) {
+					return 'DANGEROUS_NO_WHERE'
+				}
 			}
 		}
-	}
 
-	return 'SAFE'
+		return 'SAFE'
+	} catch (error) {
+		// XỬ LÝ LỖI CRASH: Nếu user gõ sai cú pháp (vd thiếu dấu ngoặc, sai chính tả)
+		// Parser sẽ văng lỗi vào đây thay vì làm sập Server.
+		console.error('SQL Parsing Error:', error)
+		return 'INVALID_SYNTAX'
+	}
 }

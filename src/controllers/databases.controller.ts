@@ -18,7 +18,7 @@ class DatabasesController {
 	}
 
 	async newQuery(req: Request, res: Response) {
-		const { query } = req.body
+		const { query, dialect, forced } = req.body
 
 		if (typeof query !== 'string' || query.trim() === '') {
 			return res
@@ -26,11 +26,21 @@ class DatabasesController {
 				.json({ ok: false, error: 'Query is required' })
 		}
 
-		let dangerousCheckResult = checkDangerousQuery(query)
-		if (dangerousCheckResult !== 'SAFE') {
+		let dangerousCheckResult = checkDangerousQuery(query, dialect)
+
+		if (dangerousCheckResult === 'INVALID_SYNTAX') {
 			return res.status(400).json({
 				ok: false,
+				error: 'Invalid SQL syntax detected.',
+				data: null,
+			})
+		}
+
+		if (dangerousCheckResult !== 'SAFE' && !forced) {
+			return res.status(403).json({
+				ok: false,
 				error: 'Dangerous query detected: ' + dangerousCheckResult,
+				data: null,
 			})
 		}
 
@@ -44,6 +54,7 @@ class DatabasesController {
 				res.status(500).json({
 					ok: false,
 					error: error.message || 'Failed to execute query',
+					data: null,
 				})
 			}
 		}
