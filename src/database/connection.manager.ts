@@ -124,6 +124,7 @@ class ConnectionManager {
 				const mysqlPool = mysql.createPool({
 					...config,
 					connectionLimit: 5,
+					multipleStatements: true,
 				})
 
 				adapter = new MySQLAdapter(mysqlPool)
