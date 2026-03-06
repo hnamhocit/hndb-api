@@ -12,7 +12,7 @@ export interface Relationship {
 export type DatabaseSchema = Record<string, IColumn[]>
 
 export interface DatabaseAdapter {
-	listDatabases(): Promise<string[]>
+	listDatabases(showAllDatabase: boolean): Promise<string[]>
 	getTableRelationships(
 		tableName: string,
 		databaseName: string | null,

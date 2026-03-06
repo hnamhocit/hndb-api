@@ -1,11 +1,10 @@
 import { Request, Response } from 'express'
 
-import { checkDangerousQuery } from '../utils'
-
 class DatabasesController {
 	async getDatabases(req: Request, res: Response) {
 		try {
-			const databases = await req.dbClient.listDatabases()
+			const showAllDatabases = req.query.showAll === 'true'
+			const databases = await req.dbClient.listDatabases(showAllDatabases)
 
 			res.json({ ok: true, data: databases })
 		} catch (error) {
@@ -14,49 +13,6 @@ class DatabasesController {
 				ok: false,
 				error: 'Failed to list databases',
 			})
-		}
-	}
-
-	async newQuery(req: Request, res: Response) {
-		const { query, dialect, forced } = req.body
-
-		if (typeof query !== 'string' || query.trim() === '') {
-			return res
-				.status(400)
-				.json({ ok: false, error: 'Query is required' })
-		}
-
-		let dangerousCheckResult = checkDangerousQuery(query, dialect)
-
-		if (dangerousCheckResult === 'INVALID_SYNTAX') {
-			return res.status(400).json({
-				ok: false,
-				error: 'Invalid SQL syntax detected.',
-				data: null,
-			})
-		}
-
-		if (dangerousCheckResult !== 'SAFE' && !forced) {
-			return res.status(403).json({
-				ok: false,
-				error: 'Dangerous query detected: ' + dangerousCheckResult,
-				data: null,
-			})
-		}
-
-		try {
-			const result = await req.dbClient.executeRawQuery(query)
-
-			res.json({ ok: true, data: result })
-		} catch (error: any) {
-			if (!res.headersSent) {
-				console.error('Error executing query:', error)
-				res.status(500).json({
-					ok: false,
-					error: error.message || 'Failed to execute query',
-					data: null,
-				})
-			}
 		}
 	}
 
@@ -88,12 +44,9 @@ class DatabasesController {
 				.json({ ok: false, error: 'Table name is required' })
 		}
 
-		const { page = 1, limit = 200 } = req.query
-		const offset = (Number(page) - 1) * Number(limit)
-
 		try {
 			const result = await req.dbClient.executeRawQuery(
-				`SELECT * FROM ${table} LIMIT ${limit} OFFSET ${offset}`,
+				`SELECT * FROM ${table} LIMIT 200`,
 			)
 
 			const jsonString = JSON.stringify(result)
@@ -140,56 +93,6 @@ class DatabasesController {
 			res.status(500).json({
 				ok: false,
 				error: 'Failed to get table relationships',
-			})
-		}
-	}
-
-	async queryPlan(req: Request, res: Response) {
-		const { db, table } = req.params
-		const { query } = req.body
-
-		if (typeof db !== 'string' || db.trim() === '') {
-			return res
-				.status(400)
-				.json({ ok: false, error: 'Database name is required' })
-		}
-
-		if (typeof table !== 'string' || table.trim() === '') {
-			return res
-				.status(400)
-				.json({ ok: false, error: 'Table name is required' })
-		}
-
-		if (typeof query !== 'string' || query.trim() === '') {
-			return res
-				.status(400)
-				.json({ ok: false, error: 'Query is required' })
-		}
-
-		// /i : Không phân biệt hoa thường
-		const isAlreadyExplain = /^\s*(EXPLAIN|DESCRIBE|DESC)\b/i.test(query)
-
-		// Chỉ auto-generate Plan cho câu SELECT bình thường để đảm bảo an toàn
-		const isSafeToAutoPlan = /^\s*SELECT\b/i.test(query)
-
-		if (!isSafeToAutoPlan && !isAlreadyExplain) {
-			return res.json({
-				ok: true,
-				data: null,
-				message:
-					'Query Plan is only supported safely for SELECT statements.',
-			})
-		}
-
-		try {
-			const result = await req.dbClient.queryPlan(query, isAlreadyExplain)
-
-			res.json({ ok: true, data: result })
-		} catch (error) {
-			console.error('Error getting query plan:', error)
-			res.status(500).json({
-				ok: false,
-				error: 'Failed to get query plan',
 			})
 		}
 	}

@@ -9,7 +9,8 @@ export const injectDbClient = async (
 	next: NextFunction,
 ) => {
 	const dataSourceId = req.params.dataSourceId as string
-	const targetDbName = req.params.db as string | undefined
+	const targetDbName =
+		((req.body?.database || req.params?.db) as string) || null
 
 	if (!dataSourceId || !isValidUUID(dataSourceId)) {
 		return res

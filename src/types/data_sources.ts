@@ -1,6 +1,11 @@
 import { IDocument } from './document'
 
-type DataSourceType = 'postgresql' | 'mysql' | 'sqlite' | 'sql-server'
+type DataSourceType =
+	| 'postgresql'
+	| 'mysql'
+	| 'sqlite'
+	| 'sql-server'
+	| 'maria-db'
 
 export interface IDataSourceConfig {
 	method: 'host' | 'url'

@@ -4,8 +4,8 @@ import sql from 'mssql'
 import mysql from 'mysql2/promise'
 import { Client } from 'pg'
 
-import { supabase } from '../database'
-import { encryptPassword } from '../utils'
+import { connectionManager, supabase } from '../database'
+import { checkDangerousQuery, encryptPassword } from '../utils'
 
 class DataSourcesController {
 	async testConnection(req: Request, res: Response) {
@@ -126,6 +126,8 @@ class DataSourcesController {
 		}
 
 		try {
+			const plainPassword = config.password
+
 			if (config.password) {
 				if (config.savePassword) {
 					config.password = encryptPassword(config.password)
@@ -133,7 +135,6 @@ class DataSourcesController {
 					delete config.password
 				}
 			}
-
 			delete config.savePassword
 
 			const { data, error } = await supabase
@@ -151,11 +152,21 @@ class DataSourcesController {
 
 			if (error) {
 				console.error('Error adding data source:', error.message)
+				return res
+					.status(500)
+					.json({ ok: false, error: 'Failed to add data source.' })
+			}
 
-				return res.status(500).json({
-					ok: false,
-					error: 'Failed to add data source.',
-				})
+			try {
+				await connectionManager.initializeTemporaryConnection(
+					data,
+					plainPassword,
+				)
+			} catch (poolError) {
+				console.warn(
+					'Could not initialize pool immediately:',
+					poolError,
+				)
 			}
 
 			res.json({ ok: true, data: data })
@@ -164,6 +175,179 @@ class DataSourcesController {
 			res.status(500).json({
 				ok: false,
 				error: 'Failed to add data source.',
+			})
+		}
+	}
+
+	async runQuery(req: Request, res: Response) {
+		const { query, dialect, forced } = req.body
+
+		if (typeof query !== 'string' || query.trim() === '') {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Query is required' })
+		}
+
+		let dangerousCheckResult = checkDangerousQuery(query, dialect)
+
+		if (dangerousCheckResult === 'INVALID_SYNTAX') {
+			return res.status(400).json({
+				ok: false,
+				error: 'Invalid SQL syntax detected.',
+				data: null,
+			})
+		}
+
+		if (dangerousCheckResult !== 'SAFE' && !forced) {
+			return res.status(403).json({
+				ok: false,
+				error: 'Dangerous query detected: ' + dangerousCheckResult,
+				data: null,
+			})
+		}
+
+		try {
+			const result = await req.dbClient.executeRawQuery(query)
+
+			res.json({ ok: true, data: result })
+		} catch (error: any) {
+			if (!res.headersSent) {
+				console.error('Error executing query:', error)
+				res.status(500).json({
+					ok: false,
+					error: error.message || 'Failed to execute query',
+					data: null,
+				})
+			}
+		}
+	}
+
+	async queryPlan(req: Request, res: Response) {
+		const { query } = req.body
+
+		if (typeof query !== 'string' || query.trim() === '') {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Query is required' })
+		}
+
+		// /i : Không phân biệt hoa thường
+		const isAlreadyExplain = /^\s*(EXPLAIN|DESCRIBE|DESC)\b/i.test(query)
+
+		// Chỉ auto-generate Plan cho câu SELECT bình thường để đảm bảo an toàn
+		const isSafeToAutoPlan = /^\s*SELECT\b/i.test(query)
+
+		if (!isSafeToAutoPlan && !isAlreadyExplain) {
+			return res.json({
+				ok: true,
+				data: null,
+				message:
+					'Query Plan is only supported safely for SELECT statements.',
+			})
+		}
+
+		try {
+			const result = await req.dbClient.queryPlan(query, isAlreadyExplain)
+
+			res.json({ ok: true, data: result })
+		} catch (error) {
+			console.error('Error getting query plan:', error)
+			res.status(500).json({
+				ok: false,
+				error: 'Failed to get query plan',
+			})
+		}
+	}
+
+	async streamStatus(req: Request, res: Response) {
+		res.setHeader('Content-Type', 'text/event-stream')
+		res.setHeader('Cache-Control', 'no-cache, no-transform') // no-transform rất quan trọng để tránh bị nén (gzip)
+		res.setHeader('Connection', 'keep-alive')
+		res.setHeader('X-Accel-Buffering', 'no') // Ngăn chặn Nginx/Proxy buffer dữ liệu SSE
+
+		// 2. Ép Express phải gửi Header về Frontend NGAY LẬP TỨC
+		res.flushHeaders()
+
+		res.write(
+			`data: ${JSON.stringify({ message: 'connected to status stream' })}\n\n`,
+		)
+
+		const listener = (payload: { id: string; status: string }) => {
+			res.write(`data: ${JSON.stringify(payload)}\n\n`)
+		}
+
+		connectionManager.on('status_changed', listener)
+
+		// 3. HEARTBEAT (PING) - GIỮ KẾT NỐI KHÔNG BỊ RỚT
+		// Nhiều trình duyệt/proxy sẽ tự ngắt kết nối nếu quá 30-60s không có dữ liệu truyền qua.
+		// Ta bắn một cái "comment" (bắt đầu bằng dấu hai chấm) mỗi 30s. Browser sẽ lờ nó đi nhưng mạng vẫn được giữ!
+		const pingInterval = setInterval(() => {
+			res.write(':\n\n')
+		}, 30000)
+
+		req.on('close', () => {
+			clearInterval(pingInterval)
+			connectionManager.off('status_changed', listener)
+			res.end()
+		})
+	}
+
+	async reconnect(req: Request, res: Response) {
+		const dataSourceId = req.params.dataSourceId as string
+
+		try {
+			await connectionManager.reconnect(dataSourceId)
+			res.json({ ok: true, message: 'Reconnected successfully' })
+		} catch (error: any) {
+			console.error('Error reconnecting:', error)
+			res.status(500).json({
+				ok: false,
+				error: 'Failed to reconnect: ' + error.message,
+			})
+		}
+	}
+
+	async disconnect(req: Request, res: Response) {
+		const dataSourceId = req.params.dataSourceId as string
+
+		try {
+			await connectionManager.disconnect(dataSourceId)
+			res.json({ ok: true, message: 'Disconnected successfully' })
+		} catch (error: any) {
+			console.error('Error disconnecting:', error)
+			res.status(500).json({
+				ok: false,
+				error: 'Failed to disconnect: ' + error.message,
+			})
+		}
+	}
+
+	async getBulkStatus(req: Request, res: Response) {
+		try {
+			const { ids } = req.body
+
+			if (
+				!Array.isArray(ids) ||
+				ids.some((id) => typeof id !== 'string')
+			) {
+				return res
+					.status(400)
+					.json({ ok: false, error: 'Invalid IDs format' })
+			}
+
+			const statuses: Record<string, boolean> = {}
+
+			for (const id of ids) {
+				const status = connectionManager.isConnected(id)
+				statuses[id] = status
+			}
+
+			res.json({ ok: true, data: statuses })
+		} catch (error) {
+			console.error('Error in getBulkStatus:', error)
+			res.status(500).json({
+				ok: false,
+				error: 'Failed to get bulk status.',
 			})
 		}
 	}
