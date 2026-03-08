@@ -222,43 +222,6 @@ class DataSourcesController {
 		}
 	}
 
-	async queryPlan(req: Request, res: Response) {
-		const { query } = req.body
-
-		if (typeof query !== 'string' || query.trim() === '') {
-			return res
-				.status(400)
-				.json({ ok: false, error: 'Query is required' })
-		}
-
-		// /i : Không phân biệt hoa thường
-		const isAlreadyExplain = /^\s*(EXPLAIN|DESCRIBE|DESC)\b/i.test(query)
-
-		// Chỉ auto-generate Plan cho câu SELECT bình thường để đảm bảo an toàn
-		const isSafeToAutoPlan = /^\s*SELECT\b/i.test(query)
-
-		if (!isSafeToAutoPlan && !isAlreadyExplain) {
-			return res.json({
-				ok: true,
-				data: null,
-				message:
-					'Query Plan is only supported safely for SELECT statements.',
-			})
-		}
-
-		try {
-			const result = await req.dbClient.queryPlan(query, isAlreadyExplain)
-
-			res.json({ ok: true, data: result })
-		} catch (error) {
-			console.error('Error getting query plan:', error)
-			res.status(500).json({
-				ok: false,
-				error: 'Failed to get query plan',
-			})
-		}
-	}
-
 	async streamStatus(req: Request, res: Response) {
 		res.setHeader('Content-Type', 'text/event-stream')
 		res.setHeader('Cache-Control', 'no-cache, no-transform') // no-transform rất quan trọng để tránh bị nén (gzip)

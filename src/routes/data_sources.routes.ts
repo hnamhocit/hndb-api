@@ -31,12 +31,6 @@ router.post(
 	dataSourcesController.runQuery,
 )
 
-router.get(
-	'/:dataSourceId/query/plan',
-	injectDbClient,
-	dataSourcesController.queryPlan,
-)
-
 // databases
 router.use('/:dataSourceId/databases', databasesRoutes)
 

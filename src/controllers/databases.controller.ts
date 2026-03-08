@@ -31,6 +31,7 @@ class DatabasesController {
 
 	async getTablePreview(req: Request, res: Response) {
 		const { db, table } = req.params
+		const { page, limit } = req.query
 
 		if (typeof db !== 'string' || db.trim() === '') {
 			return res
@@ -44,9 +45,22 @@ class DatabasesController {
 				.json({ ok: false, error: 'Table name is required' })
 		}
 
+		if (page && isNaN(Number(page))) {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Page must be a number' })
+		}
+
+		if (limit && isNaN(Number(limit))) {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Limit must be a number' })
+		}
+		const offset = page && limit ? (Number(page) - 1) * Number(limit) : 0
+
 		try {
 			const result = await req.dbClient.executeRawQuery(
-				`SELECT * FROM ${table} LIMIT 200`,
+				`SELECT * FROM ${table} LIMIT ${limit} OFFSET ${offset}`,
 			)
 
 			const jsonString = JSON.stringify(result)
@@ -93,6 +107,43 @@ class DatabasesController {
 			res.status(500).json({
 				ok: false,
 				error: 'Failed to get table relationships',
+			})
+		}
+	}
+
+	async queryPlan(req: Request, res: Response) {
+		const { query } = req.body
+
+		if (typeof query !== 'string' || query.trim() === '') {
+			return res
+				.status(400)
+				.json({ ok: false, error: 'Query is required' })
+		}
+
+		// /i : Không phân biệt hoa thường
+		const isAlreadyExplain = /^\s*(EXPLAIN|DESCRIBE|DESC)\b/i.test(query)
+
+		// Chỉ auto-generate Plan cho câu SELECT bình thường để đảm bảo an toàn
+		const isSafeToAutoPlan = /^\s*SELECT\b/i.test(query)
+
+		if (!isSafeToAutoPlan && !isAlreadyExplain) {
+			return res.json({
+				ok: true,
+				data: null,
+				message:
+					'Query Plan is only supported safely for SELECT statements.',
+			})
+		}
+
+		try {
+			const result = await req.dbClient.queryPlan(query, isAlreadyExplain)
+
+			res.json({ ok: true, data: result })
+		} catch (error) {
+			console.error('Error getting query plan:', error)
+			res.status(500).json({
+				ok: false,
+				error: 'Failed to get query plan',
 			})
 		}
 	}

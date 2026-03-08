@@ -15,6 +15,8 @@ router.get(
 	databasesController.getTablePreview,
 )
 
+router.post('/:db/query/plan', injectDbClient, databasesController.queryPlan)
+
 router.get(
 	'/:db/tables/:table/relationships',
 	injectDbClient,
