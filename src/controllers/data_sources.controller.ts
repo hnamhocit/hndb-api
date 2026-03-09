@@ -40,7 +40,7 @@ class DataSourcesController {
 			}
 
 			// 2. MYSQL & MARIADB (Dùng chung driver mysql2)
-			else if (type === 'mysql' || type === 'mariadb') {
+			else if (type === 'mysql' || type === 'maria-db') {
 				const connection = await mysql.createConnection(
 					method === 'url' ? url : (
 						{
