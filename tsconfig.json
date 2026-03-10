@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"target": "ES2022" /* Phiên bản JS đầu ra */,
+		"module": "CommonJS" /* Chuẩn module phổ biến cho Node.js */,
+		"rootDir": "./src" /* Thư mục chứa code gốc của bạn */,
+		"outDir": "./dist" /* Thư mục chứa code sau khi build xong */,
+		"esModuleInterop": true /* Giúp import các thư viện cũ mượt hơn */,
+		"forceConsistentCasingInFileNames": true /* Phân biệt chữ hoa/thường ở tên file */,
+		"strict": true /* Bật chế độ kiểm tra type nghiêm ngặt */,
+		"skipLibCheck": true /* Bỏ qua check lỗi trong node_modules để build nhanh hơn */
+	},
+	"include": ["src/**/*" /* Chỉ build các file trong thư mục src */],
+	"exclude": ["node_modules", "dist"]
+}

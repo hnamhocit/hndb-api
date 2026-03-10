@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+    api:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        ports:
+            - '8080:8080'
+        # Dùng file .env để nạp các biến môi trường (như Supabase URL, Key)
+        env_file:
+            - .env
+        restart: unless-stopped
