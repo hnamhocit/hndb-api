@@ -2,8 +2,8 @@ version: '3.8'
 
 services:
     api:
-        container_name: hnstudio-api
-        image: hnstudio-api:latest
+        container_name: hndb-api
+        image: hndb-api:latest
         build:
             context: .
             dockerfile: Dockerfile
