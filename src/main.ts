@@ -9,9 +9,9 @@ const app = express()
 
 setupMiddlewares(app)
 
-app.use('/api', routes)
+app.use('/', routes)
 
-app.get('/api/health', async (req, res) => {
+app.get('/health', async (req, res) => {
 	await checkSupabaseHealth()
 
 	res.json({ ok: true, message: 'Server is healthy' })
