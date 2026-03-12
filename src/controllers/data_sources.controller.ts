@@ -90,7 +90,6 @@ class DataSourcesController {
 
 			res.json({ ok: true, message: 'Connected successfully' })
 		} catch (error: any) {
-			console.error(`[Test Connection Failed] DB: ${type}`, error.message)
 			res.status(400).json({
 				ok: false,
 				error: 'Connect failed. Please verify your connection details.',
